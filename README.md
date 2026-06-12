@@ -2,6 +2,11 @@
 
 **Watch videos in your Claude Code statusline while your agents grind.**
 
+![vid-line demo: Mario Maker playing in the Claude Code statusline](demo.gif)
+
+*(Demo rendered programmatically with [Remotion](https://remotion.dev) from the
+actual ANSI frames — see [`demo/`](demo/).)*
+
 vid-line converts any video into ANSI half-block pixel art and plays it in
 [Claude Code's statusline](https://code.claude.com/docs/en/statusline) —
 ~3fps while Claude is working, 1fps while idle. Mario Maker during the long

@@ -1,0 +1,15 @@
+{
+  "name": "vid-line-demo",
+  "private": true,
+  "description": "Remotion-rendered demo video for vid-line",
+  "scripts": {
+    "mp4": "remotion render src/index.ts demo out/demo.mp4",
+    "gif": "remotion render src/index.ts demo out/demo.gif --codec=gif --every-nth-frame=2"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0"
+  }
+}
