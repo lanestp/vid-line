@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""vidline — prep videos into ANSI text frames for the Claude Code statusline.
+
+Usage:
+  vidline prep <url-or-file> --name mario [--width 80] [--height 8] [--fps 3] [--max-secs 600]
+  vidline resize <name> --height 16 [--width 100] [--fps 3] [--max-secs 600]
+  vidline use <name>     # make <name> the active video
+  vidline off            # stop showing video
+  vidline list
+"""
+import argparse
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+CACHE = pathlib.Path.home() / ".cache" / "vidline"
+CURRENT = CACHE / "current"
+
+
+def run(cmd, **kw):
+    res = subprocess.run(cmd, **kw)
+    if res.returncode != 0:
+        sys.exit(f"command failed: {' '.join(map(str, cmd))}")
+    return res
+
+
+def render(dest, video, width, height, fps, max_secs, colors="256"):
+    """Extract frames from video and write ANSI art into dest, swapping in atomically-ish."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp)
+        print(f"extracting frames @ {fps}fps ...")
+        run(["ffmpeg", "-v", "error", "-t", str(max_secs), "-i", str(video),
+             "-vf", f"fps={fps}", str(tmp / "f%05d.png")])
+        pngs = sorted(tmp.glob("f*.png"))
+        if not pngs:
+            sys.exit("no frames extracted")
+
+        print(f"converting {len(pngs)} frames to ANSI (fits {width}x{height}) ...")
+        new = dest / ".new"
+        if new.exists():
+            shutil.rmtree(new)
+        new.mkdir(parents=True)
+        for i, png in enumerate(pngs):
+            ansi = subprocess.run(
+                ["chafa", "--format", "symbols", "--symbols", "vhalf",
+                 "--size", f"{width}x{height}", "--colors", colors,
+                 "--animate", "off", str(png)],
+                capture_output=True, check=True).stdout
+            # chafa hides/shows the cursor around its output; in a statusline
+            # that can strand the cursor invisible if a repaint interrupts us
+            ansi = ansi.replace(b"\x1b[?25l", b"").replace(b"\x1b[?25h", b"")
+            (new / f"frame_{i:05d}.txt").write_bytes(ansi)
+            if i % 200 == 0:
+                print(f"  {i}/{len(pngs)}")
+
+    # swap: drop old frames, move new ones in, then update the manifest last so
+    # the statusline never sees a frame count higher than what exists on disk
+    for old in dest.glob("frame_*.txt"):
+        old.unlink()
+    for f in sorted(new.glob("frame_*.txt")):
+        f.rename(dest / f.name)
+    new.rmdir()
+    (dest / "manifest").write_text(f"{fps} {len(pngs)} {dest.name}\n")
+    return len(pngs)
+
+
+def prep(args):
+    dest = CACHE / args.name
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = pathlib.Path(tmp)
+        src = args.source
+        if src.startswith(("http://", "https://", "ytsearch")):
+            print(f"downloading {src} ...")
+            run(["yt-dlp", "--no-playlist", "-f", "b[height<=480]/bv*[height<=480]",
+                 "-o", str(tmp / "video.%(ext)s"), src])
+            src = next(tmp.glob("video.*"))
+        else:
+            src = pathlib.Path(src)
+        # keep the source so `vidline resize` never has to re-download
+        source = dest / f"source{src.suffix}"
+        shutil.copy(src, source)
+
+    n = render(dest, source, args.width, args.height, args.fps, args.max_secs, args.colors)
+    use_video(args.name)
+    print(f"done: {n} frames ({n / args.fps:.0f}s loop) — '{args.name}' is now playing")
+
+
+def resize(args):
+    dest = CACHE / args.name
+    sources = list(dest.glob("source.*")) if dest.exists() else []
+    if not sources:
+        sys.exit(f"no cached source for '{args.name}' — re-run vidline prep "
+                 "(videos prepped before resize existed didn't keep their source)")
+    n = render(dest, sources[0], args.width, args.height, args.fps, args.max_secs, args.colors)
+    print(f"done: {n} frames re-rendered at {args.width}x{args.height}")
+
+
+def use_video(name):
+    if not (CACHE / name / "manifest").exists():
+        sys.exit(f"no such video '{name}' — run vidline list")
+    if CURRENT.is_symlink() or CURRENT.exists():
+        CURRENT.unlink()
+    CURRENT.symlink_to(CACHE / name)
+
+
+def add_size_args(p, height_default=8):
+    p.add_argument("--width", type=int, default=80)
+    p.add_argument("--height", type=int, default=height_default)
+    p.add_argument("--fps", type=int, default=3)
+    p.add_argument("--max-secs", type=int, default=600)
+    # truecolor ("full") looks marginally better but ~3x the bytes; Claude Code
+    # truncates oversized statusline output mid-escape-sequence, which garbles
+    # the display — 256 keeps busy frames safely small
+    p.add_argument("--colors", default="256", choices=["full", "256", "16"])
+
+
+def main():
+    p = argparse.ArgumentParser(prog="vidline")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pp = sub.add_parser("prep")
+    pp.add_argument("source")
+    pp.add_argument("--name", required=True)
+    add_size_args(pp)
+
+    pr = sub.add_parser("resize")
+    pr.add_argument("name")
+    add_size_args(pr, height_default=16)
+
+    pu = sub.add_parser("use")
+    pu.add_argument("name")
+    sub.add_parser("off")
+    sub.add_parser("list")
+
+    args = p.parse_args()
+    if args.cmd == "prep":
+        prep(args)
+    elif args.cmd == "resize":
+        resize(args)
+    elif args.cmd == "use":
+        use_video(args.name)
+        print(f"now playing: {args.name}")
+    elif args.cmd == "off":
+        if CURRENT.is_symlink():
+            CURRENT.unlink()
+        print("video off")
+    elif args.cmd == "list":
+        active = CURRENT.resolve().name if CURRENT.is_symlink() else None
+        for d in sorted(CACHE.iterdir()) if CACHE.exists() else []:
+            if not d.is_symlink() and (d / "manifest").exists():
+                fps, n, _ = (d / "manifest").read_text().split()
+                mark = " *" if d.name == active else ""
+                print(f"{d.name}: {int(n) / int(fps):.0f}s @ {fps}fps{mark}")
+
+
+if __name__ == "__main__":
+    main()
