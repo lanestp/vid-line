@@ -36,6 +36,9 @@ export const Demo = () => {
   const videoFrame = Math.floor((frame / fps) * VIDEO_FPS);
   const spinner = SPINNER[Math.floor(frame / 8) % SPINNER.length];
   const cursorOn = frame % 30 < 18;
+  // the bit escalates halfway through
+  const verb = seconds < 10 ? 'Discombobulating…' : 'Recombobulating…';
+  const agents = 41 + Math.floor(seconds / 3);
 
   return (
     <AbsoluteFill
@@ -82,8 +85,8 @@ export const Demo = () => {
           </div>
           <div style={{color: '#aaa', marginTop: 8}}>
             <span style={{color: '#e5a458'}}>{spinner}</span>{' '}
-            <span style={{color: '#e5a458'}}>Discombobulating…</span>{' '}
-            <span style={{color: '#777'}}>({847 + seconds}s · 41 agents · esc to interrupt)</span>
+            <span style={{color: '#e5a458'}}>{verb}</span>{' '}
+            <span style={{color: '#777'}}>({847 + seconds}s · {agents} agents · esc to interrupt)</span>
           </div>
 
           {/* input box */}
